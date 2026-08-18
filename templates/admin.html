@@ -273,7 +273,10 @@
 <div class="app-container">
     <header>
         <h1>Syncravix<span>Gym</span></h1>
-        <div style="font-size: 0.8rem; color: var(--text-muted);">Admin</div>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Admin</div>
+            <button class="btn-small btn-outline" onclick="openModal('adminSettingsModal')">Settings</button>
+        </div>
     </header>
 
     <div class="content">
@@ -328,10 +331,13 @@
         </div>
 
         <!-- Members List -->
-        <h2>Members</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Members</h2>
+            <input type="text" id="memberSearch" placeholder="Search members..." style="width: 200px; padding: 8px; font-size: 0.9rem;" onkeyup="filterMembers()">
+        </div>
         {% if members %}
             {% for member in members %}
-            <div class="list-item">
+            <div class="list-item member-list-item">
                 <div class="list-item-header">
                     <div style="display: flex; align-items: center; gap: 10px;">
                         {% if member.profile_pic_url %}
@@ -380,7 +386,7 @@
             <div class="list-item">
                 <div class="list-item-header">
                     <span class="list-item-title">{{ pkg.name }}</span>
-                    <span style="font-weight: 600; color: var(--accent);">${{ pkg.price }}</span>
+                    <span style="font-weight: 600; color: var(--accent);">LKR {{ pkg.price }}</span>
                 </div>
                 <div class="details">
                     <div>Duration: {{ pkg.duration_months }} Month(s)</div>
@@ -400,6 +406,22 @@
 </div>
 
 <!-- ================= MODALS ================= -->
+
+<!-- Admin Settings Modal -->
+<div id="adminSettingsModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('adminSettingsModal')">&times;</span>
+        <h2>Admin Settings</h2>
+        <form action="{{ url_for('save_admin_settings') }}" method="POST">
+            <div class="form-group">
+                <label>Admin WhatsApp Number</label>
+                <input type="text" name="phone" value="{{ admin_phone }}" placeholder="e.g. 94766226039 (Omit 0)" required>
+                <small style="color: #888;">Used for receiving monthly expiry notifications.</small>
+            </div>
+            <button type="submit">Save Settings</button>
+        </form>
+    </div>
+</div>
 
 <!-- Add Package Modal -->
 <div id="packageModal" class="modal">
@@ -455,7 +477,14 @@
         <form action="{{ url_for('register_member') }}" method="POST" id="registerForm">
             <div class="form-group">
                 <label>Profile Picture</label>
-                <input type="file" id="reg_pic_input" accept="image/*">
+                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <button type="button" class="btn-small btn-outline" onclick="openCamera('reg')">Take Picture</button>
+                    <input type="file" id="reg_pic_input" accept="image/*" style="flex: 1;">
+                </div>
+                <video id="reg_video" style="display:none; width: 100%; border-radius: 8px;" autoplay playsinline></video>
+                <canvas id="reg_canvas" style="display:none;"></canvas>
+                <button type="button" id="reg_snap_btn" style="display:none; width:100%; margin-bottom: 10px;" onclick="snapPicture('reg')">Capture</button>
+                <img id="reg_preview" style="display:none; width: 100px; height: 100px; object-fit: cover; border-radius: 50%; margin-top: 10px; margin-left: auto; margin-right: auto;">
                 <input type="hidden" name="profile_pic_url" id="reg_pic_url">
             </div>
             <div class="form-group">
@@ -468,7 +497,7 @@
             </div>
             <div class="form-group">
                 <label>WhatsApp Number</label>
-                <input type="text" name="phone" required>
+                <input type="text" name="phone" placeholder="e.g. 94766226039 (Omit 0)" required>
             </div>
             <div class="form-group">
                 <label>Login Password</label>
@@ -496,7 +525,14 @@
         <form id="editMemberForm" method="POST">
             <div class="form-group">
                 <label>Profile Picture (Leave blank to keep current)</label>
-                <input type="file" id="edit_pic_input" accept="image/*">
+                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <button type="button" class="btn-small btn-outline" onclick="openCamera('edit')">Take Picture</button>
+                    <input type="file" id="edit_pic_input" accept="image/*" style="flex: 1;">
+                </div>
+                <video id="edit_video" style="display:none; width: 100%; border-radius: 8px;" autoplay playsinline></video>
+                <canvas id="edit_canvas" style="display:none;"></canvas>
+                <button type="button" id="edit_snap_btn" style="display:none; width:100%; margin-bottom: 10px;" onclick="snapPicture('edit')">Capture</button>
+                <img id="edit_preview" style="display:none; width: 100px; height: 100px; object-fit: cover; border-radius: 50%; margin-top: 10px; margin-left: auto; margin-right: auto;">
                 <input type="hidden" name="profile_pic_url" id="edit_pic_url">
             </div>
             <div class="form-group">
@@ -509,7 +545,7 @@
             </div>
             <div class="form-group">
                 <label>WhatsApp Number</label>
-                <input type="text" id="edit_mem_phone" name="phone" required>
+                <input type="text" id="edit_mem_phone" name="phone" placeholder="e.g. 94766226039 (Omit 0)" required>
             </div>
             <div class="form-group">
                 <label>New Password (Leave blank to keep current)</label>
@@ -578,11 +614,76 @@
         }
     }
 
-    async function uploadToCloudinary(fileInput) {
-        if (!fileInput.files || fileInput.files.length === 0) return null;
+    function filterMembers() {
+        const query = document.getElementById('memberSearch').value.toLowerCase();
+        const items = document.querySelectorAll('.member-list-item');
+        items.forEach(item => {
+            const text = item.innerText.toLowerCase();
+            if (text.includes(query)) {
+                item.style.display = "";
+            } else {
+                item.style.display = "none";
+            }
+        });
+    }
+
+    // Camera logic
+    let streamMap = {};
+    
+    async function openCamera(prefix) {
+        const video = document.getElementById(prefix + '_video');
+        const snapBtn = document.getElementById(prefix + '_snap_btn');
+        const fileInput = document.getElementById(prefix + '_pic_input');
+        
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
+            video.style.display = "block";
+            snapBtn.style.display = "block";
+            fileInput.style.display = "none";
+            streamMap[prefix] = stream;
+        } catch (err) {
+            alert("Could not access camera: " + err);
+        }
+    }
+
+    function snapPicture(prefix) {
+        const video = document.getElementById(prefix + '_video');
+        const canvas = document.getElementById(prefix + '_canvas');
+        const preview = document.getElementById(prefix + '_preview');
+        const fileInput = document.getElementById(prefix + '_pic_input');
+        
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Stop stream
+        if(streamMap[prefix]) {
+            streamMap[prefix].getTracks().forEach(track => track.stop());
+        }
+        
+        video.style.display = "none";
+        document.getElementById(prefix + '_snap_btn').style.display = "none";
+        preview.src = canvas.toDataURL('image/jpeg');
+        preview.style.display = "block";
+        fileInput.style.display = "block";
+    }
+
+    async function uploadToCloudinaryFromCanvasOrFile(prefix) {
+        const fileInput = document.getElementById(prefix + '_pic_input');
+        const preview = document.getElementById(prefix + '_preview');
         const formData = new FormData();
-        formData.append("file", fileInput.files[0]);
         formData.append("upload_preset", "hockey_app");
+        
+        if (preview.src && preview.src.startsWith('data:image')) {
+            // Upload base64 from camera
+            formData.append("file", preview.src);
+        } else if (fileInput.files && fileInput.files.length > 0) {
+            // Upload file
+            formData.append("file", fileInput.files[0]);
+        } else {
+            return null;
+        }
         
         const btns = document.querySelectorAll("button[type=submit]");
         btns.forEach(b => {b.disabled = true; b.textContent = "Uploading..."});
@@ -607,21 +708,31 @@
 
     document.getElementById('registerForm').addEventListener('submit', async function(e) {
         e.preventDefault();
-        const fileInput = document.getElementById('reg_pic_input');
-        if (fileInput.files.length > 0) {
-            const url = await uploadToCloudinary(fileInput);
-            if (url) document.getElementById('reg_pic_url').value = url;
+        
+        // +94 validation
+        const phone = document.querySelector('#registerForm input[name="phone"]').value;
+        if (!phone.startsWith('94')) {
+            alert("Please enter WhatsApp number starting with 94 (e.g. 94766226039)");
+            return;
         }
+
+        const url = await uploadToCloudinaryFromCanvasOrFile('reg');
+        if (url) document.getElementById('reg_pic_url').value = url;
         this.submit();
     });
 
     document.getElementById('editMemberForm').addEventListener('submit', async function(e) {
         e.preventDefault();
-        const fileInput = document.getElementById('edit_pic_input');
-        if (fileInput.files.length > 0) {
-            const url = await uploadToCloudinary(fileInput);
-            if (url) document.getElementById('edit_pic_url').value = url;
+        
+        // +94 validation
+        const phone = document.querySelector('#editMemberForm input[name="phone"]').value;
+        if (!phone.startsWith('94')) {
+            alert("Please enter WhatsApp number starting with 94 (e.g. 94766226039)");
+            return;
         }
+
+        const url = await uploadToCloudinaryFromCanvasOrFile('edit');
+        if (url) document.getElementById('edit_pic_url').value = url;
         this.submit();
     });
 </script>

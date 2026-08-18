@@ -11,5 +11,11 @@
       "src": "/(.*)",
       "dest": "app.py"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/check_memberships",
+      "schedule": "0 0 1 * *"
+    }
   ]
 }

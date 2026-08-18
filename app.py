@@ -31,10 +31,12 @@ def load_data():
         else:
             data = {}
             
-        for key in ["packages", "members", "attendance", "gym_qrs"]:
+        for key in ["packages", "members", "attendance", "gym_qrs", "admin"]:
             if key not in data:
                 if key == "gym_qrs":
                     data[key] = {}
+                elif key == "admin":
+                    data[key] = {"phone": ""}
                 else:
                     data[key] = []
         return data
@@ -123,6 +125,7 @@ def admin_dashboard():
     attendance.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     
     current_qrs = get_current_year_qrs()
+    admin_phone = data.get("admin", {}).get("phone", "")
     
     return render_template("admin.html", 
                            packages=packages, 
@@ -130,7 +133,52 @@ def admin_dashboard():
                            attendance=attendance,
                            current_qrs=current_qrs,
                            current_year=datetime.now(timezone.utc).year,
-                           firebase_api_key=FIREBASE_API_KEY)
+                           firebase_api_key=FIREBASE_API_KEY,
+                           admin_phone=admin_phone)
+
+@app.route("/admin/settings", methods=["POST"])
+def save_admin_settings():
+    phone = request.form.get("phone")
+    if phone:
+        if not phone.startswith("94"):
+            phone = "94" + phone.lstrip("0")
+        data = load_data()
+        if "admin" not in data:
+            data["admin"] = {}
+        data["admin"]["phone"] = phone
+        save_data(data)
+        flash("Admin settings saved.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+@app.route("/api/cron/check_memberships", methods=["GET", "POST"])
+def cron_check_memberships():
+    data = load_data()
+    admin_phone = data.get("admin", {}).get("phone")
+    if not admin_phone:
+        return jsonify({"error": "Admin phone not set"}), 400
+        
+    members = data.get("members", [])
+    expiring_this_month = []
+    
+    now = datetime.now(timezone.utc)
+    current_month = now.month
+    current_year = now.year
+    
+    for mem in members:
+        if mem.get("end_date"):
+            try:
+                end_date = datetime.fromisoformat(mem["end_date"])
+                if end_date.month == current_month and end_date.year == current_year:
+                    expiring_this_month.append(f"- {mem['name']} ({mem.get('phone','')}) on {end_date.strftime('%b %d')}")
+            except ValueError:
+                pass
+                
+    if expiring_this_month:
+        msg = f"Gym Memberships Expiring in {now.strftime('%B %Y')}:\n" + "\n".join(expiring_this_month)
+        send_whatsapp_message(admin_phone, msg)
+        return jsonify({"success": True, "message": "Notification sent."}), 200
+        
+    return jsonify({"success": True, "message": "No memberships expiring this month."}), 200
 
 # --- PACKAGE ROUTES ---
 
@@ -194,6 +242,9 @@ def register_member():
     profile_pic_url = request.form.get("profile_pic_url", "")
     
     if name and email and phone and password and package_id:
+        if not phone.startswith("94"):
+            phone = "94" + phone.lstrip("0")
+            
         data = load_data()
         selected_pkg = next((p for p in data.get("packages", []) if p['id'] == package_id), None)
         if not selected_pkg:
@@ -240,6 +291,9 @@ def edit_member(mem_id):
     
     mem = next((m for m in data["members"] if m['id'] == mem_id), None)
     if mem and name and email and phone:
+        if not phone.startswith("94"):
+            phone = "94" + phone.lstrip("0")
+            
         mem['name'] = name
         mem['email'] = email
         mem['phone'] = phone
@@ -378,6 +432,36 @@ def api_scan_qr():
     
     return jsonify({"success": True, "message": "Attendance logged successfully!"}), 200
 
+@app.route("/api/update_profile", methods=["POST"])
+def api_update_profile():
+    req_data = request.get_json()
+    member_id = req_data.get("member_id")
+    name = req_data.get("name")
+    email = req_data.get("email")
+    phone = req_data.get("phone")
+    
+    if not member_id:
+        return jsonify({"error": "Missing member_id"}), 400
+        
+    if phone and not phone.startswith("94"):
+        phone = "94" + phone.lstrip("0")
+        
+    data = load_data()
+    member = next((m for m in data.get("members", []) if m["id"] == member_id), None)
+    
+    if member:
+        if name: member["name"] = name
+        if email: member["email"] = email
+        if phone: member["phone"] = phone
+        save_data(data)
+        return jsonify({
+            "success": True,
+            "name": member["name"],
+            "email": member["email"],
+            "phone": member["phone"]
+        }), 200
+    return jsonify({"error": "Member not found"}), 404
+
 @app.route("/api/login", methods=["POST"])
 def api_login():
     req_data = request.get_json()
@@ -404,7 +488,9 @@ def api_login():
             "success": True, 
             "member_id": member["id"],
             "name": member["name"],
+            "email": member.get("email", ""),
             "phone": member.get("phone", ""),
+            "profile_pic_url": member.get("profile_pic_url", ""),
             "package_name": pkg_name,
             "is_paid": member.get("is_paid", False),
             "is_first_login": member.get("is_first_login", True)  # Default to True for old members
